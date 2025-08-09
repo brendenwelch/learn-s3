@@ -66,7 +66,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	fileName := videoIDString + fileExts[0]
 
-	thumbnail, err := os.Create(filepath.Join(cfg.assetsRoot, videoIDString))
+	thumbnail, err := os.Create(filepath.Join(cfg.assetsRoot, fileName))
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Failed to save thumbnail to server", err)
 		return
