@@ -1,10 +1,12 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -30,25 +32,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
-
-	const maxMemory = 10 << 20
-	r.ParseMultipartForm(maxMemory)
-
-	file, header, err := r.FormFile("thumbnail")
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
-		return
-	}
-	defer file.Close()
-
-	fileType := header.Header.Get("Content-Type")
-	fileData, err := io.ReadAll(file)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Unable to read image data", err)
-		return
-	}
-
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusNotFound, "Couldn't find video", err)
@@ -60,9 +43,43 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	fileDataString := base64.StdEncoding.EncodeToString(fileData)
+	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	thumbnailURL := "data:" + fileType + ";base64," + fileDataString
+	const maxMemory = 10 << 20
+	r.ParseMultipartForm(maxMemory)
+	file, header, err := r.FormFile("thumbnail")
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
+		return
+	}
+	defer file.Close()
+
+	fileType := header.Header.Get("Content-Type")
+	fileExts, err := mime.ExtensionsByType(fileType)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid file type", err)
+		return
+	}
+	if fileExts[0] != ".jpg" && fileExts[0] != ".jpeg" && fileExts[0] != ".png" {
+		respondWithError(w, http.StatusBadRequest, "File type not allowed", fmt.Errorf("File extension of %v is not allowed", fileExts[0]))
+		return
+	}
+	fileName := videoIDString + fileExts[0]
+
+	thumbnail, err := os.Create(filepath.Join(cfg.assetsRoot, videoIDString))
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Failed to save thumbnail to server", err)
+		return
+	}
+	defer thumbnail.Close()
+
+	_, err = io.Copy(thumbnail, file)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Failed to save thumbnail to server", err)
+		return
+	}
+
+	thumbnailURL := "http://localhost:8091/assets/" + fileName
 	video.ThumbnailURL = &thumbnailURL
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
