@@ -50,8 +50,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	fmt.Println("uploading video", videoID, "by user", userID)
 
-	const maxMemory = 1 << 30
-	r.Body = http.MaxBytesReader(w, r.Body, maxMemory)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<30)
 	file, header, err := r.FormFile("video")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
@@ -90,11 +89,18 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	rand.Read(randomData)
 	fileName := prefix + base64.RawURLEncoding.EncodeToString(randomData) + ".mp4"
 
-	tmpVideoFile.Seek(0, io.SeekStart)
+	tmpProcessingName, err := processVideoForFastStart(tmpVideoFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Failed to save video to server", err)
+		return
+	}
+	tmpProcessingFile, _ := os.Open(tmpProcessingName)
+	defer tmpProcessingFile.Close()
+
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileName,
-		Body:        tmpVideoFile,
+		Body:        tmpProcessingFile,
 		ContentType: &mediaType,
 	})
 	if err != nil {
@@ -136,6 +142,12 @@ func getVideoAspectRatio(filePath string) (string, error) {
 	default:
 		prefix = "other/"
 	}
-
 	return prefix, nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	outFilePath := filePath + ".processing"
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", outFilePath)
+	err := cmd.Run()
+	return outFilePath, err
 }
